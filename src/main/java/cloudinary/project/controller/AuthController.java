@@ -1,7 +1,7 @@
 package cloudinary.project.controller;
 
 import cloudinary.project.dto.LoginRequestDto;
-import cloudinary.project.dto.LoginUserDto;
+import cloudinary.project.dto.LoginResponseDto;
 import cloudinary.project.dto.RegisterUserRequestDto;
 import cloudinary.project.dto.RegisterUserResponseDto;
 import cloudinary.project.service.AuthService;
@@ -21,7 +21,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginUserDto> login(@RequestBody LoginRequestDto loginRequestDto) {
+    public ResponseEntity<LoginResponseDto> login(@RequestBody LoginRequestDto loginRequestDto) {
         return ResponseEntity.ok(authService.login(loginRequestDto));
     }
 

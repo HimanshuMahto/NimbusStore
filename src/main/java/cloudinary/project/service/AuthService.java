@@ -1,7 +1,7 @@
 package cloudinary.project.service;
 
 import cloudinary.project.dto.LoginRequestDto;
-import cloudinary.project.dto.LoginUserDto;
+import cloudinary.project.dto.LoginResponseDto;
 import cloudinary.project.dto.RegisterUserRequestDto;
 import cloudinary.project.dto.RegisterUserResponseDto;
 import cloudinary.project.entity.UserEntity;
@@ -24,7 +24,7 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public LoginUserDto login(LoginRequestDto loginRequestDto) {
+    public LoginResponseDto login(LoginRequestDto loginRequestDto) {
         Authentication authenticate = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(loginRequestDto.getUsername(), loginRequestDto.getPassword())
         );
@@ -32,7 +32,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid principal");
         }
         String token = jwtService.generateAccessToken(user);
-        return new LoginUserDto(token, user.getId().toString());
+        return new LoginResponseDto(token, user.getId().toString());
     }
 
     public RegisterUserResponseDto register(RegisterUserRequestDto registerUserRequestDto) {
