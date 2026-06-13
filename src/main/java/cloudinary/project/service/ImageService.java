@@ -1,5 +1,6 @@
 package cloudinary.project.service;
 
+import cloudinary.project.dto.ImageDownloadDto;
 import cloudinary.project.dto.ImageResponseDto;
 import cloudinary.project.dto.ImageUploadRequestDto;
 import cloudinary.project.dto.UserSummaryDto;
@@ -9,6 +10,9 @@ import cloudinary.project.repository.ImageRepository;
 import cloudinary.project.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
@@ -22,6 +26,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -58,7 +63,7 @@ public class ImageService {
 
     public ImageResponseDto uploadImage(ImageUploadRequestDto metadata, MultipartFile file, Long userId) {
         UserEntity user = userRepository.findById(userId).orElse(null);
-        if(user == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        if(user == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User does not exists");
         String generatedStorageKey = generateStorageKey();
         ImageEntity entity = new ImageEntity();
         if(file.getContentType() == null || !ALLOWED_IMAGE_TYPES.contains(file.getContentType())){
@@ -93,4 +98,21 @@ public class ImageService {
         return new ImageResponseDto(savedImage.getId(), new UserSummaryDto(user.getId(), user.getUsername()), savedImage.getFileName(), savedImage.getFileSize(), savedImage.getContentType(), savedImage.getWidth(), savedImage.getHeight(), savedImage.getChecksum(), savedImage.getIsPublic(), savedImage.getCreatedAt(), savedImage.getUpdatedAt());
     }
 
+    public Page<ImageResponseDto> getAllImages(UserEntity currentUser, Pageable pageable) {
+        Page<ImageEntity> imageEntity = imageRepository.findByUserId(currentUser.getId(), pageable);
+        return imageEntity.map(image -> new ImageResponseDto(image.getId(), new UserSummaryDto(currentUser.getId(), currentUser.getUsername()), image.getFileName(), image.getFileSize(), image.getContentType(), image.getWidth(), image.getHeight(), image.getChecksum(), image.getIsPublic(), image.getCreatedAt(), image.getUpdatedAt()));
+    }
+
+    public ImageDownloadDto downloadImageContentById(Long imageId, UserEntity currentUser) {
+        ImageEntity imageEntity = imageRepository.findById(imageId).orElse(null);
+        if(imageEntity == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists");
+        if(imageEntity.getIsPublic() == false && !Objects.equals(imageEntity.getUser().getId(), currentUser.getId())) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
+        Path targetPath = Paths.get(storageRoot, imageEntity.getStorageKey());
+        if(!Files.exists(targetPath)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists");
+        }
+        // Converting file's bytes into the HTTP response.
+        FileSystemResource resource = new FileSystemResource(targetPath);
+        return new ImageDownloadDto(resource, imageEntity.getContentType(), imageEntity.getFileName());
+    }
 }
