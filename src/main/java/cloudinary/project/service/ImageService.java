@@ -1,14 +1,12 @@
 package cloudinary.project.service;
 
-import cloudinary.project.dto.ImageDownloadDto;
-import cloudinary.project.dto.ImageResponseDto;
-import cloudinary.project.dto.ImageUploadRequestDto;
-import cloudinary.project.dto.UserSummaryDto;
+import cloudinary.project.dto.*;
 import cloudinary.project.entity.ImageEntity;
 import cloudinary.project.entity.UserEntity;
 import cloudinary.project.repository.ImageRepository;
 import cloudinary.project.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.data.domain.Page;
@@ -26,6 +24,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -109,7 +108,7 @@ public class ImageService {
         if(imageEntity.getIsPublic() == false && !Objects.equals(imageEntity.getUser().getId(), currentUser.getId())) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
         Path targetPath = Paths.get(storageRoot, imageEntity.getStorageKey());
         if(!Files.exists(targetPath)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists");
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Image does not exists");
         }
         // Converting file's bytes into the HTTP response.
         FileSystemResource resource = new FileSystemResource(targetPath);

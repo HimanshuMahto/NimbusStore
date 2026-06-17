@@ -1,8 +1,6 @@
 package cloudinary.project.controller;
 
-import cloudinary.project.dto.ImageDownloadDto;
-import cloudinary.project.dto.ImageResponseDto;
-import cloudinary.project.dto.ImageUploadRequestDto;
+import cloudinary.project.dto.*;
 import cloudinary.project.entity.UserEntity;
 import cloudinary.project.service.ImageService;
 import jakarta.validation.Valid;
@@ -52,6 +50,4 @@ public class ImageController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
                 .body(download.getResource());
     }
-
-
 }
