@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
-@RequestMapping("/api/user")
+@RequestMapping("/api")
 public class ImageController {
 
     private final ImageService imageService;
@@ -27,7 +27,7 @@ public class ImageController {
         this.imageService = imageService;
     }
 
-    @PostMapping(value = "/uploadImage", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ImageResponseDto> uploadImage(@RequestPart("file") MultipartFile file,
                                                         @RequestPart(value = "metadata", required = false)
                                                         @Valid ImageUploadRequestDto metadata, @AuthenticationPrincipal UserEntity currentUser) {
@@ -39,7 +39,7 @@ public class ImageController {
         return ResponseEntity.ok(imageService.getAllImages(currentUser, pageable));
     }
 
-    @GetMapping(value = "/image/{imageId}/content")
+    @GetMapping(value = "/images/{imageId}/content")
     public ResponseEntity<Resource> downloadImageById(@PathVariable Long imageId, @AuthenticationPrincipal UserEntity currentUser){
         ImageDownloadDto download = imageService.downloadImageContentById(imageId, currentUser);
         ContentDisposition disposition = ContentDisposition.attachment()
