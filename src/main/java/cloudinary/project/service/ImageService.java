@@ -2,8 +2,10 @@ package cloudinary.project.service;
 
 import cloudinary.project.dto.*;
 import cloudinary.project.entity.ImageEntity;
+import cloudinary.project.entity.TransformationEntity;
 import cloudinary.project.entity.UserEntity;
 import cloudinary.project.repository.ImageRepository;
+import cloudinary.project.repository.TransformationRepository;
 import cloudinary.project.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.DigestUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
@@ -23,6 +26,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -33,6 +37,7 @@ public class ImageService {
 
     private final UserRepository userRepository;
     private final ImageRepository imageRepository;
+    private final TransformationRepository transformationRepository;
 
     @Value("${app.storage.local.root}")
     private String storageRoot;
@@ -111,5 +116,44 @@ public class ImageService {
         // Converting file's bytes into the HTTP response.
         FileSystemResource resource = new FileSystemResource(targetPath);
         return new ImageDownloadDto(resource, imageEntity.getContentType(), imageEntity.getFileName());
+    }
+
+    @Transactional(readOnly = true)
+    public ImageResponseDto getImageMetaDataById(Long imageId, UserEntity currentUser) {
+        ImageEntity imageEntity = imageRepository.findById(imageId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists"));
+        if(!imageEntity.getIsPublic() && !Objects.equals(imageEntity.getUser().getId(), currentUser.getId())) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
+        return new ImageResponseDto(imageEntity.getId(), new UserSummaryDto(imageEntity.getUser().getId(), imageEntity.getUser().getUsername()), imageEntity.getFileName(), imageEntity.getFileSize(), imageEntity.getContentType(), imageEntity.getWidth(), imageEntity.getHeight(), imageEntity.getChecksum(), imageEntity.getIsPublic(), imageEntity.getCreatedAt(), imageEntity.getUpdatedAt());
+    }
+
+    @Transactional
+    public void deleteImageById(Long imageId, UserEntity currentUser) {
+        ImageEntity imageEntity = imageRepository.findById(imageId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists"));
+
+        if (!Objects.equals(imageEntity.getUser().getId(), currentUser.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to delete this image");
+
+        // 1. Delete every transformation's output file from disk.
+        List<TransformationEntity> transformations = transformationRepository.findByImageId(imageId);
+        for (TransformationEntity t : transformations) {
+            deleteFileQuietly(Paths.get(storageRoot, t.getOutputStorageKey()));
+        }
+
+        // 2. Delete all transformation rows.
+        transformationRepository.deleteAll(transformations);
+
+        // 3. Delete the original image file from disk.
+        deleteFileQuietly(Paths.get(storageRoot, imageEntity.getStorageKey()));
+
+        // 4. Delete the image row.
+        imageRepository.deleteById(imageId);
+    }
+
+    private void deleteFileQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

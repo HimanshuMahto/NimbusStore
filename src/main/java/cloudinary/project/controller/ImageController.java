@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api")
@@ -34,13 +35,13 @@ public class ImageController {
         return ResponseEntity.status(HttpStatus.CREATED).body(imageService.uploadImage(metadata, file, currentUser.getId()));
     }
 
-    @GetMapping(value="/images")
-    public ResponseEntity<Page<ImageResponseDto>> getAllImages(@AuthenticationPrincipal UserEntity currentUser, @PageableDefault(size = 20, sort = "createdAt", direction = org.springframework.data.domain.Sort.Direction.DESC) Pageable pageable){
+    @GetMapping(value = "/images")
+    public ResponseEntity<Page<ImageResponseDto>> getAllImages(@AuthenticationPrincipal UserEntity currentUser, @PageableDefault(size = 20, sort = "createdAt", direction = org.springframework.data.domain.Sort.Direction.DESC) Pageable pageable) {
         return ResponseEntity.ok(imageService.getAllImages(currentUser, pageable));
     }
 
     @GetMapping(value = "/images/{imageId}/content")
-    public ResponseEntity<Resource> downloadImageById(@PathVariable Long imageId, @AuthenticationPrincipal UserEntity currentUser){
+    public ResponseEntity<Resource> downloadImageById(@PathVariable Long imageId, @AuthenticationPrincipal UserEntity currentUser) {
         ImageDownloadDto download = imageService.downloadImageContentById(imageId, currentUser);
         ContentDisposition disposition = ContentDisposition.attachment()
                 .filename(download.getFileName())
@@ -49,5 +50,20 @@ public class ImageController {
                 .contentType(MediaType.parseMediaType(download.getContentType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
                 .body(download.getResource());
+    }
+
+    @GetMapping("/images/{imageId}")
+    public ResponseEntity<ImageResponseDto> getImageMetaDataById(
+            @PathVariable Long imageId,
+            @AuthenticationPrincipal UserEntity currentUser) {
+        return ResponseEntity.ok(imageService.getImageMetaDataById(imageId, currentUser));
+    }
+
+    @DeleteMapping("/images/{imageId}")
+    public ResponseEntity<Void> deleteImageById(
+            @PathVariable Long imageId,
+            @AuthenticationPrincipal UserEntity currentUser) {
+        imageService.deleteImageById(imageId, currentUser);
+        return ResponseEntity.noContent().build();
     }
 }

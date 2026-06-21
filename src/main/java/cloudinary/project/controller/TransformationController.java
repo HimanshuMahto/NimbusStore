@@ -43,4 +43,12 @@ public class TransformationController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString())
                 .body(transformedImageDownloadDto.getResource());
     }
+
+    @GetMapping("/transformations/{transformationId}")
+    public ResponseEntity<TransformationResponseDto> getTransformedImageMetaDataById(
+            @PathVariable Long transformationId,
+            @AuthenticationPrincipal UserEntity currentUser) {
+        return ResponseEntity.ok(transformationService.getTransformedImageMetaDataById(transformationId, currentUser));
+    }
+
 }

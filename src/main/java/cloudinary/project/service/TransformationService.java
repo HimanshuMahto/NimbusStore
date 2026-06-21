@@ -108,4 +108,16 @@ public class TransformationService {
         return new TransformationResponseDto(saved.getId(), saved.getStatus().name(), saved.getOutputContentType(), saved.getOutputFileSize(), saved.getCreatedAt());
     }
 
+    public TransformationResponseDto getTransformedImageMetaDataById(Long transformationId, UserEntity currentUser) {
+        TransformationEntity transformationEntity = transformationRepository.findById(transformationId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists"));
+        if(!transformationEntity.getImage().getIsPublic() && !Objects.equals(transformationEntity.getImage().getUser().getId(), currentUser.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
+        return new TransformationResponseDto(
+                transformationEntity.getId(),
+                transformationEntity.getStatus().name(),
+                transformationEntity.getOutputContentType(),
+                transformationEntity.getOutputFileSize(),
+                transformationEntity.getCreatedAt()
+        );
+    }
 }
