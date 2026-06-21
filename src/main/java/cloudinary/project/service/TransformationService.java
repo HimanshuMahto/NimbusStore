@@ -2,6 +2,7 @@ package cloudinary.project.service;
 
 import cloudinary.project.dto.TransformationRequestDto;
 import cloudinary.project.dto.TransformationResponseDto;
+import cloudinary.project.dto.TransformedImageDownloadDto;
 import cloudinary.project.entity.ImageEntity;
 import cloudinary.project.entity.TransformationEntity;
 import cloudinary.project.entity.TransformationStatus;
@@ -11,8 +12,10 @@ import cloudinary.project.repository.TransformationRepository;
 import lombok.RequiredArgsConstructor;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.DigestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -34,6 +37,19 @@ public class TransformationService {
 
     @Value("${app.storage.local.root}")
     private String storageRoot;
+
+    @Transactional(readOnly = true)
+    public TransformedImageDownloadDto downloadTransformationContentById(Long transformationId, UserEntity currentUser) {
+        TransformationEntity transformationEntity = transformationRepository.findById(transformationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transformed Image does not exists"));
+        if(!transformationEntity.getImage().getIsPublic() && !Objects.equals(transformationEntity.getImage().getUser().getId(), currentUser.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
+        Path targetPath = Paths.get(storageRoot, transformationEntity.getOutputStorageKey());
+        if(!Files.exists(targetPath))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Transformed file missing from the storage");
+        FileSystemResource resource = new FileSystemResource(targetPath);
+        return new TransformedImageDownloadDto(resource, transformationEntity.getOutputContentType(), transformationEntity.getImage().getFileName());
+    }
 
     private String generateStorageKey() {
         UUID uuid = UUID.randomUUID();
