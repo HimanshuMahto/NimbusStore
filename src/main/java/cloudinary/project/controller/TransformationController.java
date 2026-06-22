@@ -6,9 +6,12 @@ import cloudinary.project.dto.TransformedImageDownloadDto;
 import cloudinary.project.entity.UserEntity;
 import cloudinary.project.service.TransformationService;
 import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -21,7 +24,7 @@ public class TransformationController {
         this.transformationService = transformationService;
     }
 
-    @PostMapping("/{imageId}/transformations")
+    @PostMapping("/images/{imageId}/transformations")
     public ResponseEntity<TransformationResponseDto> createTransformation(
             @PathVariable Long imageId,
             @RequestBody TransformationRequestDto metadata,
@@ -49,6 +52,28 @@ public class TransformationController {
             @PathVariable Long transformationId,
             @AuthenticationPrincipal UserEntity currentUser) {
         return ResponseEntity.ok(transformationService.getTransformedImageMetaDataById(transformationId, currentUser));
+    }
+
+    @GetMapping("/transformations")
+    public ResponseEntity<Page<TransformationResponseDto>> getAllTransformations(@AuthenticationPrincipal UserEntity currentUser, @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(transformationService.getAllTransformations(currentUser, pageable));
+    }
+
+    @GetMapping("/images/{imageId}/transformations")
+    public ResponseEntity<Page<TransformationResponseDto>> getAllTransformationsByImageId(
+            @PathVariable Long imageId,
+            @AuthenticationPrincipal UserEntity currentUser,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(transformationService.getAllTransformationsByImageId(imageId, currentUser, pageable));
+    }
+
+    @DeleteMapping("/transformations/{transformationId}")
+    public ResponseEntity<Void> deleteTransformedImageById(@PathVariable Long transformationId, @AuthenticationPrincipal UserEntity currentUser) {
+        boolean isDeleted = transformationService.deleteTransformedImageById(transformationId, currentUser);
+        if(isDeleted)
+            return ResponseEntity.noContent().build();
+        else
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     }
 
 }

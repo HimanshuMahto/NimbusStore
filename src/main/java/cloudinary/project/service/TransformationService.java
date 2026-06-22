@@ -13,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,10 +25,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -73,13 +72,7 @@ public class TransformationService {
         Optional<TransformationEntity> existing = transformationRepository.findByImageIdAndTransformationHash(id, transformationHash);
         if (existing.isPresent()) {
             TransformationEntity t = existing.get();
-            return new TransformationResponseDto(
-                    t.getId(),                    // transformation id, not image id
-                    t.getStatus().name(),         // real status
-                    t.getOutputContentType(),     // output's type
-                    t.getOutputFileSize(),        // output's size
-                    t.getCreatedAt()              // entity's original creation time
-            );
+            return toResponseDto(t);
 
         }
         String generatedStorageKey = generateStorageKey();
@@ -105,19 +98,57 @@ public class TransformationService {
         transformationEntity.setOutputFileSize(outputFileSize);
         transformationEntity.setStatus(TransformationStatus.COMPLETED);
         TransformationEntity saved = transformationRepository.save(transformationEntity);
-        return new TransformationResponseDto(saved.getId(), saved.getStatus().name(), saved.getOutputContentType(), saved.getOutputFileSize(), saved.getCreatedAt());
+        return toResponseDto(saved);
     }
 
     public TransformationResponseDto getTransformedImageMetaDataById(Long transformationId, UserEntity currentUser) {
         TransformationEntity transformationEntity = transformationRepository.findById(transformationId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists"));
         if(!transformationEntity.getImage().getIsPublic() && !Objects.equals(transformationEntity.getImage().getUser().getId(), currentUser.getId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
+        return toResponseDto(transformationEntity);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TransformationResponseDto> getAllTransformations(UserEntity currentUser, Pageable pageable) {
+        Page<TransformationEntity> page = transformationRepository.findByImage_UserId(currentUser.getId(), pageable);
+        return page.map(this::toResponseDto);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TransformationResponseDto> getAllTransformationsByImageId(Long imageId, UserEntity currentUser, Pageable pageable) {
+        ImageEntity image = imageRepository.findById(imageId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exist"));
+
+        if (!image.getIsPublic() && !Objects.equals(image.getUser().getId(), currentUser.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to view this image's transformations");
+
+        Page<TransformationEntity> page = transformationRepository.findByImageId(imageId, pageable);
+        return page.map(this::toResponseDto);
+    }
+
+    private TransformationResponseDto toResponseDto(TransformationEntity t) {
         return new TransformationResponseDto(
-                transformationEntity.getId(),
-                transformationEntity.getStatus().name(),
-                transformationEntity.getOutputContentType(),
-                transformationEntity.getOutputFileSize(),
-                transformationEntity.getCreatedAt()
+                t.getId(),
+                t.getStatus().name(),
+                t.getOutputContentType(),
+                t.getOutputFileSize(),
+                t.getCreatedAt()
         );
+    }
+
+    public boolean deleteTransformedImageById(Long transformationId, UserEntity currentUser) {
+        TransformationEntity transformationEntity = transformationRepository.findById(transformationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transformed Image does not exists"));
+        if(!transformationEntity.getImage().getIsPublic() && !Objects.equals(transformationEntity.getImage().getUser().getId(), currentUser.getId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to delete this image");
+        if(Files.exists(Paths.get(storageRoot, transformationEntity.getOutputStorageKey()))){
+            try {
+                Files.deleteIfExists(Paths.get(storageRoot, transformationEntity.getOutputStorageKey()));
+            } catch (IOException e) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete transformed image");
+            }
+        }
+        transformationRepository.deleteById(transformationId);
+        return true;
     }
 }

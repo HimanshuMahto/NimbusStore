@@ -133,19 +133,16 @@ public class ImageService {
         if (!Objects.equals(imageEntity.getUser().getId(), currentUser.getId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to delete this image");
 
-        // 1. Delete every transformation's output file from disk.
+        //Deletes every transformation's output file from disk.
         List<TransformationEntity> transformations = transformationRepository.findByImageId(imageId);
         for (TransformationEntity t : transformations) {
             deleteFileQuietly(Paths.get(storageRoot, t.getOutputStorageKey()));
         }
-
-        // 2. Delete all transformation rows.
+        //Deletes all transformation rows.
         transformationRepository.deleteAll(transformations);
-
-        // 3. Delete the original image file from disk.
+        //Deletes the original image file from disk.
         deleteFileQuietly(Paths.get(storageRoot, imageEntity.getStorageKey()));
-
-        // 4. Delete the image row.
+        //Deletes the image row.
         imageRepository.deleteById(imageId);
     }
 
