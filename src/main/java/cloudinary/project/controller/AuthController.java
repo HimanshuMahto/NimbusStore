@@ -1,14 +1,15 @@
 package cloudinary.project.controller;
 
-import cloudinary.project.dto.LoginRequestDto;
-import cloudinary.project.dto.LoginResponseDto;
-import cloudinary.project.dto.RegisterUserRequestDto;
-import cloudinary.project.dto.RegisterUserResponseDto;
+import cloudinary.project.dto.*;
+import cloudinary.project.entity.UserEntity;
 import cloudinary.project.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/auth")
@@ -28,5 +29,14 @@ public class AuthController {
     @PostMapping("/signup")
     public ResponseEntity<RegisterUserResponseDto> signup(@Valid @RequestBody RegisterUserRequestDto registerUserRequestDto) {
         return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(registerUserRequestDto));
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<String> logout(@AuthenticationPrincipal UserEntity currentUser) {
+        boolean isLoggedOut = authService.getUserLoggedOut(currentUser);
+        if(isLoggedOut)
+            return ResponseEntity.ok("Logged out successfully");
+        else
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     }
 }

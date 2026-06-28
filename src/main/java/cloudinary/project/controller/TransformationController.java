@@ -5,6 +5,7 @@ import cloudinary.project.dto.TransformationResponseDto;
 import cloudinary.project.dto.TransformedImageDownloadDto;
 import cloudinary.project.entity.UserEntity;
 import cloudinary.project.service.TransformationService;
+import jakarta.validation.Valid;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -27,7 +28,7 @@ public class TransformationController {
     @PostMapping("/images/{imageId}/transformations")
     public ResponseEntity<TransformationResponseDto> createTransformation(
             @PathVariable Long imageId,
-            @RequestBody TransformationRequestDto metadata,
+            @Valid @RequestBody TransformationRequestDto metadata,
             @AuthenticationPrincipal UserEntity currentUser) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(transformationService.transformImage(imageId, metadata, currentUser));

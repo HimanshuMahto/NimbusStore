@@ -1,9 +1,6 @@
 package cloudinary.project.service;
 
-import cloudinary.project.dto.LoginRequestDto;
-import cloudinary.project.dto.LoginResponseDto;
-import cloudinary.project.dto.RegisterUserRequestDto;
-import cloudinary.project.dto.RegisterUserResponseDto;
+import cloudinary.project.dto.*;
 import cloudinary.project.entity.UserEntity;
 import cloudinary.project.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +11,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -53,5 +52,22 @@ public class AuthService {
                 .build()
         );
         return new RegisterUserResponseDto(user.getId(), user.getUsername(), user.getEmail());
+    }
+
+    public UserDto getUserData(UserEntity currentUser) {
+        if(userRepository.findById(currentUser.getId()).isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        return new UserDto(currentUser.getId(), currentUser.getUsername(), currentUser.getEmail(), currentUser.getCreatedAt(), currentUser.getUpdatedAt());
+    }
+
+    public UserDto updateUserData(Map<String, Object> updatedValues, UserEntity currentUser) {
+        if(userRepository.findById(currentUser.getId()).isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        UserEntity user = userRepository.findById(currentUser.getId()).get();
+        updatedValues.forEach((key, value) -> {
+            if(key.equals("username")) user.setUsername((String) value);
+            if(key.equals("email")) user.setEmail((String) value);
+            }
+        );
+        userRepository.save(user);
+        return new UserDto(user.getId(), user.getUsername(), user.getEmail(), user.getCreatedAt(), user.getUpdatedAt());
     }
 }
