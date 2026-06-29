@@ -14,8 +14,6 @@ public class WatermarkDto {
 
     private Long imageId;
 
-    private String text;
-
     @NotNull
     private Position position;
 
