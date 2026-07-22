@@ -1,10 +1,10 @@
 # NimbusStore
 
-A backend-only image processing platform inspired by Cloudinary, built with Java Spring Boot.
+A backend image processing service inspired by Cloudinary — upload images, apply composable transformations (resize, crop, rotate, filters, watermark, format conversion, compression), and download the results. Built with Java 17 + Spring Boot.
 
-Authenticated users upload images, manage metadata, request transformations (resize and more), and retrieve original or transformed bytes via REST APIs. Transformations are deduplicated via a hash of the config so identical requests are served from disk instead of recomputed.
+Authenticated users own their images. Transformations are hash-deduplicated so identical requests are served from disk instead of recomputed. Each transformation produces a new artifact — original files are immutable.
 
-The project is intentionally designed to demonstrate backend engineering concepts — clean architecture, ownership-based authorization, metadata-driven file management, storage abstraction, and an extensible transformation system — rather than CRUD.
+Built as a portfolio implementation of the [roadmap.sh Image Processing Service](https://roadmap.sh/projects/image-processing-service) project.
 
 ---
 
@@ -12,22 +12,135 @@ The project is intentionally designed to demonstrate backend engineering concept
 
 **Backend**
 - Java 17, Spring Boot (Web MVC, Data JPA, Security, Validation)
-- Spring Security + JWT (`io.jsonwebtoken:jjwt`)
+- Spring Security + stateless JWT (`io.jsonwebtoken:jjwt`)
 - Hibernate via Spring Data JPA
 
 **Image processing**
-- [Thumbnailator](https://github.com/coobird/thumbnailator) for resize / scale operations
+- [Thumbnailator](https://github.com/coobird/thumbnailator) — pipeline for all 9 transformation operations
+- Custom `BufferedImageOp` filters for grayscale and sepia
 
-**Database**
-- PostgreSQL (prod) / H2 (in-memory, dev) — swap via `spring.datasource.*`
-- Flyway migrations under `src/main/resources/db/migration`
+**Persistence**
+- PostgreSQL 16
+- Jackson JSON (`jsonb`) for transformation configs
+
+**API documentation**
+- OpenAPI 3 + Swagger UI via `springdoc-openapi`
 
 **Storage**
-- Local filesystem for the current version
-- Designed to support AWS S3 / Cloudflare R2 / MinIO later via `storageKey` indirection — no schema changes required for migration
+- Local filesystem with `storageKey` indirection (S3/R2 migration is a single-adapter swap)
 
 **Build**
 - Maven (wrapper: `./mvnw`)
+
+---
+
+## Quick start
+
+**Prerequisites**: JDK 17+, Docker (for Postgres).
+
+```bash
+# 1. Start Postgres
+docker run --name image-pg \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=nimbusstore \
+  -p 5432:5432 \
+  -d postgres:16
+
+# 2. Run the app
+./mvnw spring-boot:run
+```
+
+Open **http://localhost:8080/swagger-ui/index.html** for the interactive API browser.
+
+---
+
+## Features
+
+### Auth
+- Signup / login with bcrypt-hashed passwords
+- Stateless JWT (`Authorization: Bearer <token>`)
+- Client-side logout endpoint (server-side token invalidation deferred)
+- `/me` — get/update your profile
+
+### Image management
+- Multipart upload with MIME allowlist (`image/{jpeg, png, webp, gif}`)
+- Magic-byte validation via `ImageIO` (rejects mislabeled files)
+- MD5 checksum stored per image
+- Paginated listing (`?page=&size=&sort=`)
+- Streamed binary download (`Content-Disposition: attachment`)
+- Metadata fetch, delete-with-cascade (deletes all transformations + files)
+- Owner-or-public visibility model
+
+### Transformations — all 9 operations, composable
+| Operation | Parameters |
+|---|---|
+| **Resize** | `width`, `height` |
+| **Crop** | `x`, `y`, `width`, `height` |
+| **Rotate** | `rotate` (degrees, ±360) |
+| **Compress** | `quality` (0–100) |
+| **Format** | `JPEG` / `PNG` / `WEBP` / `GIF` |
+| **Flip** | `flipVertical` |
+| **Mirror** | `mirror` (horizontal) |
+| **Grayscale** | `grayscale` |
+| **Sepia** | `sepia` |
+| **Watermark** | `imageId`, `position` (9 anchors), `opacity` |
+
+Multiple operations can be requested in one call and are applied in a canonical pipeline order:
+
+```
+crop → resize → rotate → filters → flip/mirror → watermark → format → compress
+```
+
+### Transformation caching
+Every request's config is MD5-hashed. Before running any work, the service looks up `(image_id, transformation_hash)`. Cache hit → return the existing artifact. Cache miss → run the transformation and persist.
+
+This deduplicates both **compute** and **storage** — identical transformations of the same source are stored once.
+
+### Rate limiting
+`POST /api/images/{id}/transformations` is rate-limited to **60 requests / minute / user** via a PostgreSQL fixed-window counter. Excess requests receive `429 Too Many Requests` with a `Retry-After: 60` header.
+
+Enforced by a Spring `HandlerInterceptor` scoped to the transformation endpoint; other endpoints are unaffected.
+
+### API documentation
+Interactive Swagger UI at `/swagger-ui/index.html`. OpenAPI 3 spec at `/v3/api-docs`. Bearer-auth is wired in the UI — click **Authorize**, paste a JWT, and every "Try it out" call carries the token.
+
+---
+
+## API reference
+
+### Auth (public)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/auth/signup` | Register a new user |
+| `POST` | `/auth/login` | Exchange credentials for a JWT |
+| `POST` | `/auth/logout` | No-op stub; client discards the token |
+
+### User (authenticated)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/me` | Current user's profile |
+| `PATCH` | `/api/me` | Update profile |
+
+### Images (authenticated)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/images` | Multipart upload (`file`, optional `metadata`) |
+| `GET` | `/api/images` | Paginated list (owner-scoped) |
+| `GET` | `/api/images/{imageId}` | Single image metadata |
+| `GET` | `/api/images/{imageId}/content` | Download original bytes |
+| `DELETE` | `/api/images/{imageId}` | Delete image + cascade transformations |
+
+### Transformations (authenticated)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/images/{imageId}/transformations` | Create a transformation (**rate-limited**) |
+| `GET` | `/api/transformations` | Paginated list of all my transformations |
+| `GET` | `/api/images/{imageId}/transformations` | Paginated list for one image |
+| `GET` | `/api/transformations/{transformationId}` | Single transformation metadata |
+| `GET` | `/api/transformations/{transformationId}/content` | Download transformed bytes |
+| `DELETE` | `/api/transformations/{transformationId}` | Delete transformation + file |
+
+Authorization is ownership-based. Downloads of transformations also honor the source image's `isPublic` flag.
 
 ---
 
@@ -36,209 +149,186 @@ The project is intentionally designed to demonstrate backend engineering concept
 ```
 src/main/java/cloudinary/project/
 ├── ProjectApplication.java
-├── controller/        # Auth + Image controllers
-├── service/           # AuthService, ImageService, TransformationService, JwtService, ...
-├── security/          # SecurityConfig + JwtFilter
-├── repository/        # JPA repositories
-├── entity/            # JPA entities
-├── dto/               # Request/response DTOs
-└── error/             # GlobalExceptionHandler + ApiError
+├── controller/          # Auth, User, Image, Transformation controllers
+├── service/             # AuthService, ImageService, TransformationService, JwtService
+├── security/            # SecurityConfig, JwtFilter, RateLimitInterceptor
+├── config/              # OpenApiConfig, WebConfig, custom filter classes
+├── repository/          # JPA repositories (User, Image, Transformation, RateLimiter)
+├── entity/              # JPA entities
+├── dto/                 # Request/response DTOs (typed, validated)
+└── error/               # Global exception handler + error envelope
 src/main/resources/
-├── application.properties
-└── db/migration/V1__init.sql
+└── application.properties
 ```
 
 ---
 
 ## Architecture
 
-The application is currently a modular monolith with three primary modules:
+Modular monolith with four modules:
 
-### Authentication module
-User registration and login, JWT generation and validation, endpoint protection.
+- **Authentication** — signup/login, JWT issue and validate, filter-based enforcement.
+- **User** — profile management (`/me` endpoints).
+- **Image** — upload, storage, retrieval, listing, delete-with-cascade. Original images are **immutable after upload**.
+- **Transformation** — Thumbnailator-backed operation pipeline, hash-keyed cache, derived-artifact storage, listing, retrieval, delete.
 
-### Image module
-Image upload, metadata storage, retrieval, paginated listing, download/view. The original `ImageEntity` is **immutable after upload** — transformations never mutate it.
-
-### Transformation module
-Image transformations, transformation metadata, derived-artifact storage, hash-based caching. Each transformation produces a new file at its own `outputStorageKey` and a corresponding `TransformationEntity` row.
+Each layer respects clean separation:
+- Controllers know HTTP — they extract params, call services, wrap results in `ResponseEntity`.
+- Services own business logic — validation, authz, transformation, persistence orchestration. Return plain DTOs.
+- Repositories own SQL — Spring Data queries + one native query for the rate-limit upsert.
 
 ---
 
 ## Data model
 
 ### User
-Represents an authenticated platform user.
+Represents an authenticated platform user. One user owns many images.
 
 | Field | Notes |
-| --- | --- |
+|---|---|
 | `id` | PK |
-| `username`, `email`, `passwordHash` | credentials |
+| `username`, `email` | unique |
+| `passwordHash` | bcrypt |
 | `createdAt`, `updatedAt` | timestamps |
-
-A user can own many images.
 
 ### Image
-Represents an original uploaded image. Stores metadata only; bytes live on disk.
+An original uploaded image. Metadata only — bytes live on disk under `storageKey`. Immutable after upload.
 
 | Field | Notes |
-| --- | --- |
+|---|---|
 | `id` | PK |
 | `user` | FK → users |
-| `fileName`, `contentType`, `fileSize` | original file metadata |
-| `storageKey` | path-segment under `app.storage.local.root` |
-| `width`, `height` | from `ImageIO` |
-| `checksum` | MD5 of bytes |
-| `isPublic` | viewability flag |
+| `fileName`, `contentType`, `fileSize` | original upload metadata |
+| `storageKey` | path segment (e.g. `abc/def/uuid-1`) — never an absolute path |
+| `width`, `height` | probed via `ImageIO` at upload |
+| `checksum` | MD5 of the uploaded bytes |
+| `isPublic` | visibility flag |
 | `createdAt`, `updatedAt` | timestamps |
-
-An image can have many transformations.
 
 ### Transformation
-Represents a derived artifact generated from an original image.
+A derived artifact produced from an image + config. Belongs to one image.
 
 | Field | Notes |
-| --- | --- |
+|---|---|
 | `id` | PK |
 | `image` | FK → images |
-| `transformationHash` | MD5 of canonicalized config (unique with `image_id`) |
-| `transformationConfig` | JSON map of params (e.g. `{width,height}`) |
-| `outputStorageKey` | path-segment for the derived file |
+| `transformationHash` | MD5 of the canonicalized config |
+| `transformationConfig` | `jsonb` — the full request as structured data |
+| `outputStorageKey` | path segment for the derived file |
 | `outputContentType`, `outputFileSize` | derived-artifact metadata |
-| `status` | enum: `PENDING` / `PROCESSING` / `COMPLETED` / `FAILED` |
-| `errorMessage` | populated on `FAILED` (currently unused — sync path) |
+| `status` | `PENDING` / `PROCESSING` / `COMPLETED` / `FAILED` (currently sync — only `COMPLETED` used) |
+| `errorMessage` | populated on `FAILED` (unused today) |
 | `createdAt`, `updatedAt` | timestamps |
 
-Unique constraint on `(image_id, transformation_hash)` — the same config against the same source can only exist once.
+Unique constraint on `(image_id, transformation_hash)` enforces cache semantics at the DB level.
 
----
+### RateLimit
+Tracks per-user request counters in fixed-minute windows.
 
-## Authentication
+| Field | Notes |
+|---|---|
+| `userId`, `windowStart` | composite PK |
+| `requestCount` | int |
 
-Implemented with stateless JWT. CSRF disabled in `SecurityConfig` (stateless JWT API — intentional).
-
-| Method | Path | Body | Returns |
-| --- | --- | --- | --- |
-| `POST` | `/auth/signup` | `RegisterUserRequestDto` | `201` + `RegisterUserResponseDto` |
-| `POST` | `/auth/login` | `LoginRequestDto` | `200` + `LoginUserDto` (carries JWT) |
-
-Protected endpoints expect `Authorization: Bearer <token>`. Authorization is ownership-based: users can access their own images and transformations; image downloads also respect the `isPublic` flag.
-
----
-
-## Features implemented
-
-### User management
-- Registration, login, JWT-protected endpoints
-
-### Image management
-- `POST /api/user/uploadImage` — multipart upload, MIME allowlist (jpeg/png/gif/webp), MD5 checksum, `ImageIO` magic-byte verification, owner-scoped persistence
-- `GET /api/user/images` — paginated listing (`?page=&size=&sort=`) defaulting to 20 per page, sorted by `createdAt desc`
-- `GET /api/user/image/{imageId}/content` — streamed binary download (`Content-Disposition: attachment`), owner-or-public authz
-
-### Transformation (in progress)
-- `POST /api/user/image/{id}/transform` — resize via Thumbnailator. Hashes config, looks up existing transformation, serves cached result if found; otherwise runs the resize, writes the new file, and persists the metadata.
+Rows accumulate one per (user, minute); a daily cleanup job (planned) will evict rows older than the retention window.
 
 ---
 
 ## Storage strategy
 
-Originals and transformed artifacts both live on disk under `app.storage.local.root`. The application persists only a `storageKey` (path-segment) — never a full URL or absolute path.
+Bytes live on disk under `${app.storage.local.root}` (default: `~/.imagetransformer/uploads`). The DB persists only a **storage key** — a path segment like `abc/def/542986b0-a662-4aa4-...` — never an absolute path or URL.
 
 ```
-~/.imagetransformer/uploads/abc/def/542986b0-a662-4aa4-...     # original
-~/.imagetransformer/uploads/xyz/uvw/<another-uuid>             # transformed
+~/.imagetransformer/uploads/abc/def/uuid-original      # ImageEntity.storageKey
+~/.imagetransformer/uploads/xyz/uvw/uuid-transformed   # TransformationEntity.outputStorageKey
 ```
 
-This indirection lets a future migration to S3/R2/MinIO ship without touching the schema — only the storage adapter changes.
+**Why this shape**: migrating to object storage (S3, R2, MinIO) becomes a code-only change. The DB schema stays; only the file-read/write adapter is replaced.
 
 ---
 
-## Transformation caching
+## Transformation pipeline
 
-Before any transformation runs, the service computes a hash of the request config:
+Every request flows through:
 
-```
-transformationHash = MD5(canonicalized(config))
-```
+1. **Fetch source image** (`orElseThrow` → 404) + authz (owner only for create).
+2. **Compute hash** — MD5 of the request DTO.
+3. **Cache lookup** — `SELECT` by `(image_id, hash)`. Present → return; done.
+4. **Build Thumbnailator chain** — conditional operations in canonical order.
+5. **Execute** via `.toOutputStream(...)` to the exact `outputStorageKey` (avoids Thumbnailator's extension-appending quirk).
+6. **Persist** `TransformationEntity` with hash, config map, output metadata, status `COMPLETED`.
+7. **Return** the DTO.
 
-Then queries `transformations` for an existing row with the same `(image_id, transformation_hash)`:
-
-1. **Cache hit** → return the existing metadata. No work done.
-2. **Cache miss** → run the transformation, write the output file, save a new row.
-
-This prevents duplicate processing and storage when the same transformation is requested repeatedly.
-
----
-
-## Planned API
-
-```
-# Auth
-POST /auth/register
-POST /auth/login
-
-# Images
-POST   /images
-GET    /images
-GET    /images/{id}
-GET    /images/{id}/content
-DELETE /images/{id}
-
-# Transformations
-POST /images/{id}/transform
-GET  /transformations/{id}
-GET  /transformations/{id}/content
-```
+The pipeline always specifies both a sizing operation (defaulting to `scale(1.0)` if no resize) and an explicit output format (defaulting to the source's), guaranteeing Thumbnailator has everything it needs.
 
 ---
 
-## Planned transformation types
+## Rate limiting
 
-**Phase 1** — resize (done), rotate, format conversion
-**Phase 2** — crop, grayscale, flip, mirror, compression
-**Phase 3** — watermark, advanced filters
+**Algorithm**: fixed-window counter, atomic in one SQL statement:
+
+```sql
+INSERT INTO rate_limits (user_id, window_start, request_count)
+VALUES (:userId, date_trunc('minute', now()), 1)
+ON CONFLICT (user_id, window_start)
+DO UPDATE SET request_count = rate_limits.request_count + 1
+RETURNING request_count;
+```
+
+**Chosen over Redis/token-bucket** because:
+- No new infrastructure required — PG is already in the stack.
+- `INSERT ... ON CONFLICT ... RETURNING` is atomic in a single round-trip.
+- The boundary-burst trade-off of fixed-window is negligible at 60 req/min/user.
+- The `HandlerInterceptor` abstraction leaves the door open to swap in Redis (`Bucket4j`) if scale demands it.
+
+Enforced via a Spring `HandlerInterceptor` registered for `/api/images/*/transformations` only. Other endpoints don't touch the rate-limit table.
 
 ---
 
-## Prerequisites
+## Configuration
 
-- JDK 17+
-- (Optional) PostgreSQL 14+ if running against Postgres instead of H2
+All settings are overridable via environment variables. Defaults are safe for local dev:
+
+| Env var | Default | Description |
+|---|---|---|
+| `SERVER_PORT` | `8080` | HTTP port |
+| `STORAGE_ROOT` | `~/.imagetransformer/uploads` | On-disk file root |
+| `UPLOAD_MAX_BYTES` | `10485760` (10 MB) | Per-file upload cap |
+| `JWT_SECRET_KEY` | fallback (dev-only) | **Set before deploying anywhere non-local** |
+
+Database credentials are currently hardcoded in `application.properties`; move to env vars in the same style before deploying.
+
+---
 
 ## Running locally
 
-Default profile uses in-memory H2 — no external services needed.
+**Postgres** (via Docker):
+```bash
+docker run --name image-pg \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=nimbusstore \
+  -p 5432:5432 \
+  -d postgres:16
+```
 
+Container data lives inside the container. For durable data across `docker rm`, mount a volume:
+```bash
+docker run ... -v image-pg-data:/var/lib/postgresql/data ...
+```
+
+**Spring app**:
 ```bash
 ./mvnw spring-boot:run
 ```
 
-App boots on `http://localhost:8080`. H2 console at `http://localhost:8080/h2-console` (JDBC URL: `jdbc:h2:mem:imagetransformer`).
+Boots on `http://localhost:8080`. Hibernate creates tables on first startup (`ddl-auto=update`).
 
-### Switching to PostgreSQL
-
-Edit `src/main/resources/application.properties`:
-
-```properties
-spring.datasource.url=jdbc:postgresql://localhost:5432/nimbusstore
-spring.datasource.username=postgres
-spring.datasource.password=postgres
-spring.datasource.driver-class-name=org.postgresql.Driver
-spring.flyway.enabled=true
-spring.jpa.hibernate.ddl-auto=validate
+**Verify data**:
+```bash
+docker exec -it image-pg psql -U postgres -d nimbusstore -c "\dt"
 ```
 
-Flyway applies `V1__init.sql` on startup.
-
-## Configuration
-
-| Property | Default | Description |
-| --- | --- | --- |
-| `server.port` | `8080` | HTTP port (override via `SERVER_PORT`) |
-| `app.storage.local.root` | `~/.imagetransformer/uploads` | Where image bytes live on disk |
-| `app.upload.max-bytes` | `10485760` (10 MB) | Per-file upload cap |
-| `jwt.secretKey` | _(hardcoded in properties)_ | **Replace before deploying.** Move to env var. |
+---
 
 ## Build a runnable jar
 
@@ -247,35 +337,62 @@ Flyway applies `V1__init.sql` on startup.
 java -jar target/project-0.0.1-SNAPSHOT.jar
 ```
 
-## Tests
-
-```bash
-./mvnw test
-```
-
 ---
 
 ## Design principles
 
-- **Clean layering** — controllers handle HTTP, services hold business logic, repositories own persistence. Services return plain DTOs; controllers wrap them in `ResponseEntity`.
-- **Ownership-based authorization** — applied at the service layer (e.g. download requires owner OR public).
-- **Immutable originals** — uploaded image rows are never mutated. Transformations are separate artifacts.
-- **DTO-based API contracts** — entities never leave the service layer.
-- **Storage abstraction via storageKey** — DB stores path-segments, not URLs. Backend swap is local.
-- **Hash-keyed transformation cache** — duplicate work is detected before it runs.
+- **Clean layering** — HTTP concerns stay in controllers, business logic in services, SQL in repositories. Services return plain DTOs; controllers wrap into `ResponseEntity`.
+- **Ownership-based authz** — applied at the service layer. Reads honor `isPublic`; writes are owner-only.
+- **Originals are immutable** — every transformation produces a new artifact; the source is never overwritten.
+- **Typed, validated DTOs** — request bodies are strongly typed with nested DTOs (`ResizeDto`, `CropDto`, `WatermarkDto`, etc.) and Bean Validation constraints on every field.
+- **Storage indirection** — DB stores path segments, not URLs. Backend swap is a code-only change.
+- **Hash-keyed cache** — expensive transformations are computed once per unique config.
+- **Fail-fast validation** — MIME allowlist, magic-byte check, size limits enforced at upload boundary.
+- **Composable transformations** — one request can chain multiple operations; canonical order guarantees deterministic output.
 
 ---
 
-## Planned future enhancements
+## Spec coverage — roadmap.sh Image Processing Service
 
-**Infrastructure** — Docker Compose, AWS S3, Redis, RabbitMQ
-**Scalability** — async transformation workers, job queues, retry mechanisms
-**Security** — signed URLs, rate limiting
-**Observability** — structured logging, metrics, Prometheus + Grafana
-**Developer experience** — OpenAPI / Swagger, Flyway-only schema management, integration tests
+| Requirement | Status |
+|---|---|
+| User signup / login with JWT | ✅ |
+| Upload image (multipart) | ✅ |
+| Transform image (composable) | ✅ |
+| Get image by ID | ✅ |
+| List images paginated | ✅ |
+| Resize | ✅ |
+| Crop | ✅ |
+| Rotate | ✅ |
+| Watermark | ✅ |
+| Flip / Mirror | ✅ |
+| Compress | ✅ |
+| Format conversion | ✅ |
+| Grayscale / Sepia filters | ✅ |
+| Rate limiting on transformations | ✅ |
+| Caching of transformed images | ✅ (hash-keyed) |
+| Input validation + error handling | ✅ |
+| Cloud storage integration | 🟡 (design-ready via `storageKey`; local-only impl today) |
+| Async processing (optional) | 🟡 (status enum ready; sync execution today) |
+
+---
+
+## Roadmap
+
+Next up, in priority order:
+
+- **`StorageService` interface** — extract behind `LocalStorageService` implementation; open the door to `S3StorageService` without touching services or controllers.
+- **Global error envelope polish** — populate `statusCode` from the exception type consistently.
+- **Repository + controller tests** — `@DataJpaTest`, `@WebMvcTest`, MockMvc for happy paths and authz.
+- **GitHub Actions CI** — `./mvnw verify` on every PR.
+- **Docker Compose for the app** — one-command clone-and-run.
+- **Refresh tokens** — currently client-side logout with 1-hour access tokens. Refresh flow is a future upgrade.
+- **Async transformation pipeline** — Spring `@Async` or a message queue; the `TransformationStatus` enum's other values become load-bearing.
+- **Signed download URLs** — share-a-link without a Bearer header.
+- **Observability** — structured logging, Prometheus metrics, Grafana dashboards.
 
 ---
 
 ## Project goal
 
-Build a production-style image processing backend that demonstrates practical backend engineering skills: authentication, file management, image processing, persistence, optimization, and scalable system design.
+Demonstrate practical backend engineering: clean architecture, ownership-based authorization, composable domain operations, hash-keyed idempotency, real database interactions, and a thoughtful set of abstractions that support scaling from a single-instance dev environment to production infrastructure — without rewrites.

@@ -54,6 +54,15 @@ public class AuthService {
         return new RegisterUserResponseDto(user.getId(), user.getUsername(), user.getEmail());
     }
 
+    public boolean getUserLoggedOut(UserEntity currentUser) {
+        // Stateless JWT: logout is handled client-side by discarding the token.
+        // Server-side we just confirm the user is valid.
+        if (currentUser == null || userRepository.findById(currentUser.getId()).isEmpty()) {
+            return false;
+        }
+        return true;
+    }
+
     public UserDto getUserData(UserEntity currentUser) {
         if(userRepository.findById(currentUser.getId()).isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
         return new UserDto(currentUser.getId(), currentUser.getUsername(), currentUser.getEmail(), currentUser.getCreatedAt(), currentUser.getUpdatedAt());

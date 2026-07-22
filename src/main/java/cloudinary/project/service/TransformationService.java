@@ -27,6 +27,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -147,10 +148,17 @@ public class TransformationService {
             Thumbnails.Builder<File> builder = Thumbnails.of(targetPath.toFile());
             if (metadata.getResize() != null && metadata.getResize().getWidth() != null && metadata.getResize().getHeight() != null)
                 builder.size(metadata.getResize().getWidth(), metadata.getResize().getHeight());
+            else {
+                builder.scale(1.0);
+            }
             if (metadata.getRotate() != null) builder.rotate(metadata.getRotate());
             if (metadata.getCrop() != null && metadata.getCrop().getX() != null && metadata.getCrop().getY() != null && metadata.getCrop().getWidth() != null && metadata.getCrop().getHeight() != null)
                 builder.sourceRegion(metadata.getCrop().getX(), metadata.getCrop().getY(), metadata.getCrop().getWidth(), metadata.getCrop().getHeight());
-            if (metadata.getFormat() != null) builder.outputFormat(thumbnailatorFormat(metadata.getFormat()));
+            if (metadata.getFormat() != null) {
+                builder.outputFormat(thumbnailatorFormat(metadata.getFormat()));
+            } else {
+                builder.outputFormat(imageEntity.getContentType().substring("image/".length()));
+            }
             if (metadata.getCompress() != null && metadata.getCompress().getQuality() != null)
                 builder.outputQuality(metadata.getCompress().getQuality() / 100.0f);
             if (Boolean.TRUE.equals(metadata.getGrayscale())) builder.addFilter(new GrayScaleFilter());
@@ -165,7 +173,9 @@ public class TransformationService {
                         metadata.getWatermark().getOpacity()
                 );
             }
-            builder.toFile(transformedPath.toFile());
+            try (OutputStream os = Files.newOutputStream(transformedPath)) {
+                builder.toOutputStream(os);
+            }
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Transformation failed");
         }
@@ -197,8 +207,9 @@ public class TransformationService {
         return toResponseDto(saved);
     }
 
+    @Transactional(readOnly = true)
     public TransformationResponseDto getTransformedImageMetaDataById(Long transformationId, UserEntity currentUser) {
-        TransformationEntity transformationEntity = transformationRepository.findById(transformationId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Image does not exists"));
+        TransformationEntity transformationEntity = transformationRepository.findById(transformationId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transformation does not exist"));
         if (!transformationEntity.getImage().getIsPublic() && !Objects.equals(transformationEntity.getImage().getUser().getId(), currentUser.getId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not authorized to access this image");
         return toResponseDto(transformationEntity);
@@ -232,6 +243,7 @@ public class TransformationService {
         );
     }
 
+    @Transactional
     public boolean deleteTransformedImageById(Long transformationId, UserEntity currentUser) {
         TransformationEntity transformationEntity = transformationRepository.findById(transformationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Transformed Image does not exists"));
